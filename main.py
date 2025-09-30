@@ -1,5 +1,7 @@
 import os
 from fastapi import FastAPI, HTTPException
+# Importación nueva para CORS
+from fastapi.middleware.cors import CORSMiddleware
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -7,28 +9,34 @@ from firebase_admin import credentials, firestore
 #  CONFIGURACIÓN DE LA APLICACIÓN Y FIREBASE
 # =================================================================
 
-# Se crea la aplicación FastAPI
 app = FastAPI()
 
-# Ruta al archivo de credenciales que guardarás de forma segura en Render
-# Render lo pondrá disponible en esta ruta dentro del servidor
+# ===============================================================
+#  NUEVO: AÑADIMOS LA CONFIGURACIÓN DE CORS
+#  Esto le da permiso al navegador para conectar con nuestra API
+# ===============================================================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite que cualquier origen (incluido tu archivo local) se conecte
+    allow_credentials=True,
+    allow_methods=["*"],  # Permite todos los métodos (GET, POST, etc.)
+    allow_headers=["*"],  # Permite todas las cabeceras
+)
+
 CREDENTIALS_FILE_PATH = "/etc/secrets/firebase_credentials.json"
 
 try:
-    # Inicializa la conexión con Firebase usando las credenciales seguras
     cred = credentials.Certificate(CREDENTIALS_FILE_PATH)
     firebase_admin.initialize_app(cred)
     print("Firebase Admin SDK inicializado correctamente.")
 except Exception as e:
-    # Este mensaje se verá en los logs de Render si hay un problema
     print(f"ERROR: No se pudo inicializar Firebase. Revisa el archivo de credenciales. Error: {e}")
 
-# Obtiene una instancia de la base de datos de Firestore
 db = firestore.client()
 
 
 # =================================================================
-#  ENDPOINTS DE LA API
+#  ENDPOINTS DE LA API (sin cambios aquí)
 # =================================================================
 
 @app.get("/")
@@ -44,18 +52,14 @@ def get_festival_data():
     documento 'devData' en Firestore.
     """
     try:
-        # Apunta directamente al documento 'devData' que creamos
         doc_ref = db.collection('festivalInfo').document('devData')
         document = doc_ref.get()
 
         if document.exists:
-            # Si el documento existe, devuelve su contenido
             return document.to_dict()
         else:
-            # Si no se encuentra, devuelve un error 404
             raise HTTPException(status_code=404, detail="Documento 'devData' no encontrado en la base de datos.")
 
     except Exception as e:
-        # Si ocurre cualquier otro error, devuelve un error 500
         print(f"ERROR al leer de Firestore: {e}")
         raise HTTPException(status_code=500, detail=f"Error interno del servidor al conectar con la base de datos: {e}")
