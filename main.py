@@ -115,3 +115,104 @@ async def update_news(news: List[dict], user: str = Depends(verify_token)):
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo actualizar las noticias: {e}")
+# --- INICIO DEL CÓDIGO A AÑADIR ---
+
+MAX_LOGO_SIZE_MB = 2
+MAX_PHOTO_SIZE_MB = 3
+MAX_SONG_SIZE_MB = 10
+
+# Función para subir un archivo y devolver su URL pública
+async def upload_file_to_storage(file: UploadFile, path: str) -> str:
+    if not file or not file.filename:
+        return ""
+    try:
+        filename = f"{path}/{int(datetime.now().timestamp())}_{file.filename}"
+        blob = bucket.blob(filename)
+        
+        # Leemos el contenido del archivo en memoria para validar tamaño y subir
+        file_content = await file.read()
+        await file.seek(0) # Rebobinamos el puntero del archivo por si se necesita leer de nuevo
+        
+        content_type, _ = mimetypes.guess_type(file.filename)
+        blob.upload_from_string(file_content, content_type=content_type or 'application/octet-stream')
+        blob.make_public()
+        return blob.public_url
+    except Exception as e:
+        print(f"Error subiendo archivo a {path}: {e}")
+        # En un caso real, podrías querer manejar este error de forma más robusta
+        raise HTTPException(status_code=500, detail=f"No se pudo subir el archivo: {file.filename}")
+
+
+@app.post("/api/v1/submit-band")
+async def submit_band(
+    band_name: str = Form(...),
+    band_email: str = Form(...),
+    band_province: str = Form(...),
+    band_bio: str = Form(...),
+    logo_file: UploadFile = File(...),
+    photo_file: UploadFile = File(...),
+    song_file: UploadFile = File(...)
+):
+    if not db or not bucket:
+        raise HTTPException(status_code=503, detail="Servicios de base de datos o almacenamiento no disponibles.")
+
+    # --- VALIDACIÓN DE TAMAÑO EN EL BACKEND ---
+    # Convertimos MB a Bytes para la comparación
+    if len(await logo_file.read()) > MAX_LOGO_SIZE_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"El logo supera el límite de {MAX_LOGO_SIZE_MB}MB.")
+    await logo_file.seek(0)
+    
+    if len(await photo_file.read()) > MAX_PHOTO_SIZE_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"La foto supera el límite de {MAX_PHOTO_SIZE_MB}MB.")
+    await photo_file.seek(0)
+
+    if len(await song_file.read()) > MAX_SONG_SIZE_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"La canción supera el límite de {MAX_SONG_SIZE_MB}MB.")
+    await song_file.seek(0)
+    # --- FIN DE LA VALIDACIÓN ---
+    
+    doc_ref = db.collection('festivalInfo').document('mainData')
+
+    try:
+        # 1. Comprobar si el email ya existe para evitar duplicados
+        doc = doc_ref.get()
+        if doc.exists:
+            all_data = doc.to_dict()
+            bands = all_data.get("bands", [])
+            if any(band.get('email') == band_email for band in bands):
+                raise HTTPException(status_code=409, detail="El email de contacto ya ha sido registrado por otra banda.")
+        else:
+            bands = [] # Si el documento no existe, empezamos con una lista vacía
+
+        # 2. Subir los archivos a Firebase Storage
+        logo_url = await upload_file_to_storage(logo_file, "logos")
+        photo_url = await upload_file_to_storage(photo_file, "photos")
+        song_url = await upload_file_to_storage(song_file, "songs")
+
+        # 3. Preparar los datos de la nueva banda
+        new_band_id = max([b['id'] for b in bands] + [0]) + 1
+        new_band_data = {
+            "id": new_band_id,
+            "name": band_name,
+            "email": band_email,
+            "province": band_province,
+            "bio": band_bio,
+            "logo": logo_url,
+            "photo": photo_url,
+            "songUrl": song_url,
+            "qualificationStatus": "Maqueta recibida",
+            "rating": None
+        }
+
+        # 4. Añadir la nueva banda a la lista y actualizar en Firestore
+        bands.append(new_band_data)
+        doc_ref.update({"bands": bands})
+
+        return {"status": "ok", "message": "Banda inscrita correctamente.", "band_id": new_band_id}
+
+    except HTTPException as http_exc:
+        raise http_exc # Re-lanzamos las excepciones HTTP para que FastAPI las maneje
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor al procesar la inscripción: {e}")
+
+# --- FIN DEL CÓDIGO A AÑADIR ---
