@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+firebase-admin
+PyJWT[crypto]
+python-dotenv
+python-multipart
