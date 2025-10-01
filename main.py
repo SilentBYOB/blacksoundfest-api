@@ -179,8 +179,10 @@ async def submit_band(
         if doc.exists:
             all_data = doc.to_dict()
             bands = all_data.get("bands", [])
-            if any(band.get('email') == band_email for band in bands):
-                raise HTTPException(status_code=409, detail="El email de contacto ya ha sido registrado por otra banda.")
+            # EXCEPCIÓN AÑADIDA: Saltamos la comprobación para el email de prueba
+            if band_email != "7892580@gmail.com":
+                if any(band.get('email') == band_email for band in bands):
+                    raise HTTPException(status_code=409, detail="El email de contacto ya ha sido registrado por otra banda.")
         else:
             bands = [] # Si el documento no existe, empezamos con una lista vacía
 
