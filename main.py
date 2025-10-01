@@ -22,8 +22,9 @@ try:
         CREDENTIALS_FILE_PATH = "/etc/secrets/firebase_credentials.json"
         if os.path.exists(CREDENTIALS_FILE_PATH):
             cred = credentials.Certificate(CREDENTIALS_FILE_PATH)
+            # --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
             firebase_admin.initialize_app(cred, {
-                'storageBucket': 'bbdd-fest.appspot.com' 
+                'storageBucket': 'bbdd-fest.firebasestorage.app'
             })
             print("Firebase Admin SDK inicializado.")
     db = firestore.client()
@@ -34,7 +35,7 @@ except Exception as e:
     print(f"ERROR CRÍTICO AL INICIALIZAR FIREBASE: {e}")
 
 JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'fallback_secret')
-ALGORITHM = "HS256"
+ALGORITHM = "HS26"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
 class Band(BaseModel):
@@ -76,7 +77,7 @@ async def upload_file(path: str = Form(...), file: UploadFile = File(...), curre
         raise HTTPException(status_code=500, detail=f"No se pudo subir el archivo: {e}")
 
 @app.get("/")
-def read_root(): return {"status": "ok", "message": "API Black Sound FEST v2.0 (con subida centralizada) Operativa"}
+def read_root(): return {"status": "ok", "message": "API Black Sound FEST v2.1 (con subida y bucket corregido) Operativa"}
 @app.get("/api/v1/data", response_model=AllData)
 def get_festival_data():
     if not db: raise HTTPException(status_code=503, detail="Servicio de base de datos no disponible.")
