@@ -40,7 +40,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 120
 class Band(BaseModel):
     id: int; name: str; photo: Optional[str] = None; bio: Optional[str] = None; logo: Optional[str] = None; email: Optional[str] = None; province: Optional[str] = None; qualificationStatus: Optional[str] = "Maqueta recibida"; songUrl: Optional[str] = None; rating: Optional[int] = None
 class AllData(BaseModel):
-    logoSVG: Optional[str] = ""; info: Optional[dict] = {}; bands: Optional[List[Band]] = []; news: Optional[list] = []; bracket: Optional[dict] = {}
+    class AllData(BaseModel):
+    logoSVG: Optional[str] = ""; info: Optional[dict] = {}; bands: Optional[List[Band]] = []; news: Optional[list] = []; bracket: Optional[dict] = {}; sponsors: Optional[List[dict]] = []
 class LoginSchema(BaseModel):
     username: str; password: str
 class ContentUpdateRequest(BaseModel):
