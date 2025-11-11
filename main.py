@@ -115,6 +115,14 @@ async def update_news(news: List[dict], user: str = Depends(verify_token)):
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo actualizar las noticias: {e}")
+@app.put("/api/v1/data/sponsors")
+async def update_sponsors(sponsors: List[dict], user: str = Depends(verify_token)):
+    if not db: raise HTTPException(status_code=503, detail="BD no disponible.")
+    try:
+        db.collection('festivalInfo').document('mainData').update({"sponsors": sponsors})
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo actualizar los sponsors: {e}")        
 # --- INICIO DEL CÓDIGO A AÑADIR ---
 
 MAX_LOGO_SIZE_MB = 2
