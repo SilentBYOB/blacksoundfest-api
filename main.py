@@ -46,6 +46,7 @@ class AllData(BaseModel):
     news: Optional[list] = []
     bracket: Optional[dict] = {}
     sponsors: Optional[List[dict]] = []
+    faqContent: Optional[str] = ""
 class LoginSchema(BaseModel):
     username: str; password: str
 class ContentUpdateRequest(BaseModel):
@@ -91,6 +92,8 @@ def get_festival_data():
             festival_data = doc.to_dict()
             if "sponsors" not in festival_data:
                 festival_data["sponsors"] = []
+            if "faqContent" not in festival_data:
+                festival_data["faqContent"] = ""    
             return festival_data
         else: raise HTTPException(status_code=404, detail="Documento 'mainData' no encontrado.")
     except Exception as e: raise HTTPException(status_code=500, detail=f"Error interno: {e}")
