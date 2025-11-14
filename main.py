@@ -171,7 +171,7 @@ async def submit_band(
     band_bio: str = Form(...),
     logo_file: UploadFile = File(...),
     photo_file: UploadFile = File(...),
-    song_file: UploadFile = File(...)
+    song_file: UploadFile = File(...),
     website_url: Optional[str] = Form("")
 ):
     if not db or not bucket:
