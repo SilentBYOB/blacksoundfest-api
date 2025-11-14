@@ -172,9 +172,12 @@ async def submit_band(
     logo_file: UploadFile = File(...),
     photo_file: UploadFile = File(...),
     song_file: UploadFile = File(...)
+    website_url: Optional[str] = Form("")
 ):
     if not db or not bucket:
         raise HTTPException(status_code=503, detail="Servicios de base de datos o almacenamiento no disponibles.")
+    if website_url:
+        raise HTTPException(status_code=400, detail="Spam detectado")
 
     # --- VALIDACIÓN DE TAMAÑO EN EL BACKEND ---
     # Convertimos MB a Bytes para la comparación
