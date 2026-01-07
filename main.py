@@ -9,6 +9,7 @@ import jwt
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 from typing import List, Optional, Any
+from fastapi import Request
 
 app = FastAPI()
 
@@ -241,3 +242,74 @@ async def submit_band(
         raise HTTPException(status_code=500, detail=f"Error interno del servidor al procesar la inscripción: {e}")
 
 # --- FIN DEL CÓDIGO A AÑADIR ---
+# --- AÑADIDO PARA VOTACIONES FASE 2 ---
+
+class VoteRequest(BaseModel):
+    band_id: int
+
+@app.post("/api/v1/vote")
+async def register_vote(vote: VoteRequest, request: Request):
+    if not db:
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+
+    # 1. Obtener la IP real del usuario (considerando que Render usa proxies)
+    client_ip = request.headers.get("x-forwarded-for") or request.client.host
+    # Si hay varias IPs, cogemos la primera (la real del cliente)
+    if client_ip and "," in client_ip:
+        client_ip = client_ip.split(",")[0].strip()
+
+    # 2. Generar ID único: AAAA-MM-DD_IP_BANDA
+    today = datetime.now().strftime("%Y-%m-%d")
+    unique_vote_id = f"{today}_{client_ip}_{vote.band_id}"
+    
+    vote_ref = db.collection('votos_2025').document(unique_vote_id)
+
+    try:
+        # 3. Transacción: Intentar crear el registro de "ya votó"
+        # .create() falla automáticamente si el documento ya existe
+        vote_ref.create({
+            "band_id": vote.band_id,
+            "ip": client_ip,
+            "timestamp": firestore.SERVER_TIMESTAMP,
+            "platform": "web"
+        })
+
+        # 4. Si llegamos aquí, es que no había votado. Sumamos el voto a la banda.
+        # NOTA: No necesitamos transacción compleja, incrementamos un contador atómico.
+        # Esto asume que tienes un campo 'votes' en tus bandas. Si no, lo crea.
+        # (Pero como tu estructura es un array gigante en mainData, haremos una lectura/escritura segura)
+        
+        main_doc_ref = db.collection('festivalInfo').document('mainData')
+        
+        @firestore.transactional
+        def update_band_vote(transaction, doc_ref, b_id):
+            snapshot = transaction.get(doc_ref)
+            main_data = snapshot.to_dict()
+            bands = main_data.get("bands", [])
+            
+            found = False
+            for band in bands:
+                if band.get("id") == b_id:
+                    # Inicializamos a 0 si no existe y sumamos 1
+                    current = band.get("votes", 0)
+                    band["votes"] = current + 1
+                    found = True
+                    break
+            
+            if found:
+                transaction.update(doc_ref, {"bands": bands})
+            else:
+                pass # Banda no encontrada, ignoramos
+
+        transaction = db.transaction()
+        update_band_vote(transaction, main_doc_ref, vote.band_id)
+
+        return {"status": "ok", "message": "Voto registrado. ¡Gracias!"}
+
+    except Exception as e:
+        # Si el error es "409 Already Exists", es que ya votó hoy
+        if "409" in str(e) or "already exists" in str(e).lower():
+            raise HTTPException(status_code=429, detail="Ya has votado a esta banda hoy. ¡Vuelve mañana!")
+        
+        print(f"Error votando: {e}")
+        raise HTTPException(status_code=500, detail="Error interno al procesar el voto.")
