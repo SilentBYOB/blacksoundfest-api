@@ -88,16 +88,45 @@ def read_root(): return {"status": "ok", "message": "API Black Sound FEST v2.0 (
 def get_festival_data():
     if not db: raise HTTPException(status_code=503, detail="Servicio de base de datos no disponible.")
     try:
+        # 1. Leemos los datos principales (Info, Bandas sin votos, Noticias)
         doc = db.collection('festivalInfo').document('mainData').get()
+        
         if doc.exists:
             festival_data = doc.to_dict()
+            
+            # Inicialización de campos opcionales (código original)
             if "sponsors" not in festival_data:
                 festival_data["sponsors"] = []
             if "faqContent" not in festival_data:
                 festival_data["faqContent"] = ""    
+
+            # --- NUEVA LÓGICA: FUSIÓN DE VOTOS ---
+            # 2. Leemos la colección separada de contadores
+            # (Si la colección no existe aún, esto simplemente devuelve una lista vacía, no da error)
+            counters_stream = db.collection('band_counters').stream()
+            
+            # 3. Creamos un diccionario rápido en memoria: { "40": 150, "41": 32 }
+            votes_map = {}
+            for c in counters_stream:
+                # c.id es el ID de la banda, c.get("count") es el número de votos
+                votes_map[c.id] = c.get("count")
+
+            # 4. Pegamos los votos a cada banda dentro del JSON
+            if "bands" in festival_data:
+                for band in festival_data["bands"]:
+                    # Convertimos ID a string porque las claves del mapa son strings
+                    b_id = str(band.get("id"))
+                    # Si hay votos en el mapa, los usamos. Si no, ponemos 0.
+                    band["votes"] = votes_map.get(b_id, 0)
+            # -------------------------------------
+
             return festival_data
-        else: raise HTTPException(status_code=404, detail="Documento 'mainData' no encontrado.")
-    except Exception as e: raise HTTPException(status_code=500, detail=f"Error interno: {e}")
+        else: 
+            raise HTTPException(status_code=404, detail="Documento 'mainData' no encontrado.")
+            
+    except Exception as e: 
+        print(f"Error cargando datos: {e}") # Añadido print para debug en Render
+        raise HTTPException(status_code=500, detail=f"Error interno: {e}")
 @app.post("/api/v1/login")
 def login(form_data: LoginSchema):
     ADMIN_USER=os.environ.get('ADMIN_USER'); ADMIN_PASSWORD=os.environ.get('ADMIN_PASSWORD')
@@ -247,69 +276,51 @@ async def submit_band(
 class VoteRequest(BaseModel):
     band_id: int
 
+# Transacción: Log de seguridad + Contador separado
+@firestore.transactional
+def execute_separated_vote(transaction, vote_ref, counter_ref, vote_data):
+    # 1. ¿Ya votó? (Seguridad)
+    if transaction.get(vote_ref).exists:
+        raise ValueError("ALREADY_VOTED")
+
+    # 2. Leer contador actual
+    snapshot = transaction.get(counter_ref)
+    current_count = 0
+    if snapshot.exists:
+        current_count = snapshot.get("count") or 0
+    
+    # 3. Guardar log y actualizar contador (+1)
+    transaction.create(vote_ref, vote_data)
+    transaction.set(counter_ref, {"count": current_count + 1}, merge=True)
+
 @app.post("/api/v1/vote")
 async def register_vote(vote: VoteRequest, request: Request):
-    if not db:
-        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    if not db: raise HTTPException(status_code=503, detail="BD no disponible")
 
-    # 1. Obtener la IP real del usuario (considerando que Render usa proxies)
+    # Obtener IP
     client_ip = request.headers.get("x-forwarded-for") or request.client.host
-    # Si hay varias IPs, cogemos la primera (la real del cliente)
-    if client_ip and "," in client_ip:
-        client_ip = client_ip.split(",")[0].strip()
+    if client_ip and "," in client_ip: client_ip = client_ip.split(",")[0].strip()
 
-    # 2. Generar ID único: AAAA-MM-DD_IP_BANDA
+    # IDs
     today = datetime.now().strftime("%Y-%m-%d")
     unique_vote_id = f"{today}_{client_ip}_{vote.band_id}"
     
     vote_ref = db.collection('votos_2025').document(unique_vote_id)
+    # Aquí apuntamos a la colección separada
+    counter_ref = db.collection('band_counters').document(str(vote.band_id))
 
     try:
-        # 3. Transacción: Intentar crear el registro de "ya votó"
-        # .create() falla automáticamente si el documento ya existe
-        vote_ref.create({
-            "band_id": vote.band_id,
-            "ip": client_ip,
-            "timestamp": firestore.SERVER_TIMESTAMP,
-            "platform": "web"
-        })
-
-        # 4. Si llegamos aquí, es que no había votado. Sumamos el voto a la banda.
-        # NOTA: No necesitamos transacción compleja, incrementamos un contador atómico.
-        # Esto asume que tienes un campo 'votes' en tus bandas. Si no, lo crea.
-        # (Pero como tu estructura es un array gigante en mainData, haremos una lectura/escritura segura)
+        vote_data = { "band_id": vote.band_id, "ip": client_ip, "timestamp": firestore.SERVER_TIMESTAMP, "platform": "web" }
         
-        main_doc_ref = db.collection('festivalInfo').document('mainData')
-        
-        @firestore.transactional
-        def update_band_vote(transaction, doc_ref, b_id):
-            snapshot = transaction.get(doc_ref)
-            main_data = snapshot.to_dict()
-            bands = main_data.get("bands", [])
-            
-            found = False
-            for band in bands:
-                if band.get("id") == b_id:
-                    # Inicializamos a 0 si no existe y sumamos 1
-                    current = band.get("votes", 0)
-                    band["votes"] = current + 1
-                    found = True
-                    break
-            
-            if found:
-                transaction.update(doc_ref, {"bands": bands})
-            else:
-                pass # Banda no encontrada, ignoramos
-
         transaction = db.transaction()
-        update_band_vote(transaction, main_doc_ref, vote.band_id)
-
+        execute_separated_vote(transaction, vote_ref, counter_ref, vote_data)
+        
         return {"status": "ok", "message": "Voto registrado. ¡Gracias!"}
 
+    except ValueError as ve:
+        if str(ve) == "ALREADY_VOTED": raise HTTPException(status_code=429, detail="Ya has votado a esta banda hoy. ¡Vuelve mañana!.")
+        raise HTTPException(status_code=500, detail="Error interno.")
     except Exception as e:
-        # Si el error es "409 Already Exists", es que ya votó hoy
-        if "409" in str(e) or "already exists" in str(e).lower():
-            raise HTTPException(status_code=429, detail="Ya has votado a esta banda hoy. ¡Vuelve mañana!")
-        
+        if "409" in str(e): raise HTTPException(status_code=429, detail="Ya has votado a esta banda hoy. ¡Vuelve mañana!")
         print(f"Error votando: {e}")
         raise HTTPException(status_code=500, detail="Error interno al procesar el voto.")
