@@ -39,7 +39,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
 class Band(BaseModel):
-    id: int; name: str; photo: Optional[str] = None; bio: Optional[str] = None; logo: Optional[str] = None; email: Optional[str] = None; province: Optional[str] = None; qualificationStatus: Optional[str] = "Maqueta recibida"; songUrl: Optional[str] = None; rating: Optional[int] = None
+    id: int; name: str; photo: Optional[str] = None; bio: Optional[str] = None; logo: Optional[str] = None; email: Optional[str] = None; province: Optional[str] = None; qualificationStatus: Optional[str] = "Maqueta recibida"; songUrl: Optional[str] = None; rating: Optional[int] = None; votes: Optional[int] = 0
 class AllData(BaseModel):
     logoSVG: Optional[str] = ""
     info: Optional[dict] = {}
