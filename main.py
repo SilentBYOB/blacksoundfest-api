@@ -86,46 +86,37 @@ async def upload_file(path: str = Form(...), file: UploadFile = File(...), curre
 def read_root(): return {"status": "ok", "message": "API Black Sound FEST v2.0 (con subida centralizada) Operativa"}
 @app.get("/api/v1/data", response_model=AllData)
 def get_festival_data():
-    if not db: raise HTTPException(status_code=503, detail="Servicio de base de datos no disponible.")
+    if not db: raise HTTPException(status_code=503, detail="BD no disponible.")
     try:
-        # 1. Leemos los datos principales (Info, Bandas sin votos, Noticias)
+        # 1. Leemos los datos principales
         doc = db.collection('festivalInfo').document('mainData').get()
+        if not doc.exists: raise HTTPException(status_code=404, detail="Datos no encontrados.")
         
-        if doc.exists:
-            festival_data = doc.to_dict()
-            
-            # Inicialización de campos opcionales (código original)
-            if "sponsors" not in festival_data:
-                festival_data["sponsors"] = []
-            if "faqContent" not in festival_data:
-                festival_data["faqContent"] = ""    
+        festival_data = doc.to_dict()
+        
+        # Inicializamos campos opcionales
+        if "sponsors" not in festival_data: festival_data["sponsors"] = []
+        if "faqContent" not in festival_data: festival_data["faqContent"] = ""
 
-            # --- NUEVA LÓGICA: FUSIÓN DE VOTOS ---
-            # 2. Leemos la colección separada de contadores
-            # (Si la colección no existe aún, esto simplemente devuelve una lista vacía, no da error)
-            counters_stream = db.collection('band_counters').stream()
-            
-            # 3. Creamos un diccionario rápido en memoria: { "40": 150, "41": 32 }
-            votes_map = {}
-            for c in counters_stream:
-                # c.id es el ID de la banda, c.get("count") es el número de votos
-                votes_map[c.id] = c.get("count")
+        # 2. LO NUEVO: Leemos los contadores de la colección separada
+        counters_stream = db.collection('band_counters').stream()
+        
+        # Creamos un mapa rápido: { "40": 12, "41": 5 }
+        votes_map = {}
+        for c in counters_stream:
+            votes_map[c.id] = c.get("count")
 
-            # 4. Pegamos los votos a cada banda dentro del JSON
-            if "bands" in festival_data:
-                for band in festival_data["bands"]:
-                    # Convertimos ID a string porque las claves del mapa son strings
-                    b_id = str(band.get("id"))
-                    # Si hay votos en el mapa, los usamos. Si no, ponemos 0.
-                    band["votes"] = votes_map.get(b_id, 0)
-            # -------------------------------------
+        # 3. PEGAMENTO: Unimos los votos a las bandas
+        if "bands" in festival_data:
+            for band in festival_data["bands"]:
+                b_id = str(band.get("id"))
+                # Si existe voto, lo ponemos. Si no, 0.
+                band["votes"] = votes_map.get(b_id, 0)
 
-            return festival_data
-        else: 
-            raise HTTPException(status_code=404, detail="Documento 'mainData' no encontrado.")
-            
+        return festival_data
+        
     except Exception as e: 
-        print(f"Error cargando datos: {e}") # Añadido print para debug en Render
+        print(f"Error cargando datos: {e}")
         raise HTTPException(status_code=500, detail=f"Error interno: {e}")
 @app.post("/api/v1/login")
 def login(form_data: LoginSchema):
