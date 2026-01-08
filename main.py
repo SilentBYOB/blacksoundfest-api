@@ -279,15 +279,18 @@ class VoteRequest(BaseModel):
 # Transacción: Log de seguridad + Contador separado
 @firestore.transactional
 def execute_separated_vote(transaction, vote_ref, counter_ref, vote_data):
-    # 1. ¿Ya votó? (Seguridad)
-    if transaction.get(vote_ref).exists:
+    vote_snap = vote_ref.get(transaction=transaction)
+    
+    # 1. Seguridad: ¿Ya votó?
+    if vote_snap.exists:
         raise ValueError("ALREADY_VOTED")
 
-    # 2. Leer contador actual
-    snapshot = transaction.get(counter_ref)
+    # 2. Leer contador actual (misma corrección aquí)
+    counter_snap = counter_ref.get(transaction=transaction)
     current_count = 0
-    if snapshot.exists:
-        current_count = snapshot.get("count") or 0
+    
+    if counter_snap.exists:
+        current_count = counter_snap.get("count") or 0
     
     # 3. Guardar log y actualizar contador (+1)
     transaction.create(vote_ref, vote_data)
