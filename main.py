@@ -48,6 +48,7 @@ class AllData(BaseModel):
     bracket: Optional[dict] = {}
     sponsors: Optional[List[dict]] = []
     faqContent: Optional[str] = ""
+    guest_artists: Optional[List[dict]] = []
 class LoginSchema(BaseModel):
     username: str; password: str
 class ContentUpdateRequest(BaseModel):
@@ -155,7 +156,15 @@ async def update_sponsors(sponsors: List[dict], user: str = Depends(verify_token
         db.collection('festivalInfo').document('mainData').update({"sponsors": sponsors})
         return {"status": "ok"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"No se pudo actualizar los sponsors: {e}")        
+        raise HTTPException(status_code=500, detail=f"No se pudo actualizar los sponsors: {e}")
+@app.put("/api/v1/data/guests")
+async def update_guests(guests: List[dict], user: str = Depends(verify_token)):
+    if not db: raise HTTPException(status_code=503, detail="BD no disponible.")
+    try:
+        db.collection('festivalInfo').document('mainData').update({"guest_artists": guests})
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar invitados: {e}")        
 # --- INICIO DEL CÓDIGO A AÑADIR ---
 
 MAX_LOGO_SIZE_MB = 2
