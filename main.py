@@ -3,6 +3,7 @@ import mimetypes
 from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import firebase_admin
 from firebase_admin import credentials, firestore, storage
 import jwt
@@ -12,6 +13,25 @@ from typing import List, Optional, Any
 from fastapi import Request, Response
 
 app = FastAPI()
+
+# Para reabrir una operación, configura su variable en Render con el valor true.
+FESTIVAL_WRITE_GATES = {
+    "/api/v1/submit-band": ("FESTIVAL_REGISTRATIONS_OPEN", "Las inscripciones están cerradas."),
+    "/api/v1/vote": ("FESTIVAL_VOTING_OPEN", "La votación está cerrada."),
+}
+
+
+@app.middleware("http")
+async def enforce_festival_closure(request: Request, call_next):
+    # Bloquea el POST antes de que FastAPI lea el formulario o los archivos.
+    if request.method == "POST":
+        gate = FESTIVAL_WRITE_GATES.get(request.url.path.rstrip("/"))
+        if gate is not None:
+            variable, message = gate
+            if os.environ.get(variable, "").strip().lower() != "true":
+                return JSONResponse(status_code=403, content={"detail": message})
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
