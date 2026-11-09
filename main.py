@@ -9,7 +9,7 @@ import jwt
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 from typing import List, Optional, Any
-from fastapi import Request
+from fastapi import Request, Response
 
 app = FastAPI()
 
@@ -38,17 +38,42 @@ JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'fallback_secret')
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
-class Band(BaseModel):
-    id: int; name: str; photo: Optional[str] = None; bio: Optional[str] = None; logo: Optional[str] = None; email: Optional[str] = None; province: Optional[str] = None; qualificationStatus: Optional[str] = "Maqueta recibida"; songUrl: Optional[str] = None; rating: Optional[int] = None; votes: Optional[int] = 0; spotifyUrl: Optional[str] = None
-class AllData(BaseModel):
+class PublicBand(BaseModel):
+    id: int
+    name: str
+    photo: Optional[str] = None
+    bio: Optional[str] = None
+    logo: Optional[str] = None
+    province: Optional[str] = None
+    qualificationStatus: Optional[str] = "Maqueta recibida"
+    songUrl: Optional[str] = None
+    votes: Optional[int] = 0
+    spotifyUrl: Optional[str] = None
+
+
+class Band(PublicBand):
+    email: Optional[str] = None
+    rating: Optional[int] = None
+
+
+class FestivalData(BaseModel):
     logoSVG: Optional[str] = ""
     info: Optional[dict] = {}
-    bands: Optional[List[Band]] = []
     news: Optional[list] = []
     bracket: Optional[dict] = {}
     sponsors: Optional[List[dict]] = []
     faqContent: Optional[str] = ""
     guest_artists: Optional[List[dict]] = []
+
+
+class PublicFestivalData(FestivalData):
+    bands: Optional[List[PublicBand]] = []
+
+
+class AllData(FestivalData):
+    bands: Optional[List[Band]] = []
+
+
 class LoginSchema(BaseModel):
     username: str; password: str
 class ContentUpdateRequest(BaseModel):
@@ -85,8 +110,21 @@ async def upload_file(path: str = Form(...), file: UploadFile = File(...), curre
 
 @app.get("/")
 def read_root(): return {"status": "ok", "message": "API Black Sound FEST v2.0 (con subida centralizada) Operativa"}
-@app.get("/api/v1/data", response_model=AllData)
-def get_festival_data():
+@app.get("/api/v1/data", response_model=PublicFestivalData)
+def get_festival_data(response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return _read_festival_data()
+
+
+@app.get("/api/v1/admin/data", response_model=AllData)
+def get_admin_festival_data(response: Response, user: str = Depends(verify_token)):
+    if user != os.environ.get("ADMIN_USER"):
+        raise HTTPException(status_code=403, detail="Acceso reservado al administrador.")
+    response.headers["Cache-Control"] = "private, no-store"
+    return _read_festival_data()
+
+
+def _read_festival_data():
     if not db: raise HTTPException(status_code=503, detail="BD no disponible.")
     try:
         # 1. Leemos los datos principales
@@ -133,6 +171,12 @@ async def update_content(req: ContentUpdateRequest, user: str = Depends(verify_t
     except Exception as e: raise HTTPException(status_code=500, detail=f"No se pudo actualizar: {e}")
 @app.put("/api/v1/data/bands")
 async def update_bands(bands: List[Band], user: str = Depends(verify_token)):
+    # Una pestaña anterior al cambio puede enviar la lista pública sin estos campos.
+    if any(not {"email", "rating"}.issubset(band.model_fields_set) for band in bands):
+        raise HTTPException(
+            status_code=409,
+            detail="Recarga la web e inicia sesión de nuevo antes de guardar las bandas.",
+        )
     if not db: raise HTTPException(status_code=503, detail="BD no disponible.")
     try: db.collection('festivalInfo').document('mainData').update({"bands": [b.dict(exclude_none=True) for b in bands]}); return {"status": "ok"}
     except Exception as e: raise HTTPException(status_code=500, detail=f"No se pudo actualizar: {e}")
