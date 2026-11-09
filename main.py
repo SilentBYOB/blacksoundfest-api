@@ -1,5 +1,10 @@
 import os
 import mimetypes
+from collections import OrderedDict
+from ipaddress import IPv6Address, IPv6Network, ip_address
+from math import ceil
+from threading import Lock
+from time import monotonic
 from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -177,13 +182,75 @@ def _read_festival_data():
     except Exception as e: 
         print(f"Error cargando datos: {e}")
         raise HTTPException(status_code=500, detail=f"Error interno: {e}")
+LOGIN_FAILURE_LIMIT = 5
+LOGIN_COOLDOWN_SECONDS = 15 * 60
+LOGIN_MAX_TRACKED_CLIENTS = 4096
+login_failures: OrderedDict[str, tuple[int, float]] = OrderedDict()
+login_failures_lock = Lock()
+
+
+def get_login_client_key(request: Request) -> str:
+    if os.environ.get("RENDER") == "true":
+        # Cloudflare sobrescribe esta cabecera en las peticiones públicas de Render.
+        raw_ip = request.headers.get("cf-connecting-ip")
+    else:
+        raw_ip = request.client.host if request.client else None
+
+    try:
+        address = ip_address(raw_ip)
+    except ValueError:
+        raise HTTPException(status_code=503, detail="No se pudo verificar el origen del acceso.")
+
+    if isinstance(address, IPv6Address):
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        return str(IPv6Network((int(address), 64), strict=False))
+    return str(address)
+
+
+def login_rate_limit_error(last_failure: float, now: float) -> HTTPException:
+    retry_after = max(1, ceil(last_failure + LOGIN_COOLDOWN_SECONDS - now))
+    return HTTPException(
+        status_code=429,
+        detail="Demasiados intentos de acceso. Espera unos minutos y vuelve a intentarlo.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 @app.post("/api/v1/login")
-def login(form_data: LoginSchema):
-    ADMIN_USER=os.environ.get('ADMIN_USER'); ADMIN_PASSWORD=os.environ.get('ADMIN_PASSWORD')
-    if not ADMIN_USER or not ADMIN_PASSWORD: raise HTTPException(status_code=500, detail="Credenciales no configuradas.")
-    if form_data.username == ADMIN_USER and form_data.password == ADMIN_PASSWORD:
-        return {"access_token": create_access_token(data={"sub": form_data.username}), "token_type": "bearer"}
-    else: raise HTTPException(status_code=400, detail="Usuario o contraseña incorrectos")
+def login(form_data: LoginSchema, request: Request):
+    admin_user = os.environ.get("ADMIN_USER")
+    admin_password = os.environ.get("ADMIN_PASSWORD")
+    if not admin_user or not admin_password:
+        raise HTTPException(status_code=500, detail="Credenciales no configuradas.")
+
+    client_key = get_login_client_key(request)
+    with login_failures_lock:
+        now = monotonic()
+        # Las entradas se ordenan por el último fallo, de más antiguo a más reciente.
+        while login_failures:
+            _, oldest_failure = next(iter(login_failures.values()))
+            if now - oldest_failure < LOGIN_COOLDOWN_SECONDS:
+                break
+            login_failures.popitem(last=False)
+
+        failures, last_failure = login_failures.get(client_key, (0, 0.0))
+        if failures >= LOGIN_FAILURE_LIMIT:
+            raise login_rate_limit_error(last_failure, now)
+        if not failures and len(login_failures) >= LOGIN_MAX_TRACKED_CLIENTS:
+            _, oldest_failure = next(iter(login_failures.values()))
+            raise login_rate_limit_error(oldest_failure, now)
+
+        if form_data.username != admin_user or form_data.password != admin_password:
+            login_failures[client_key] = (failures + 1, now)
+            login_failures.move_to_end(client_key)
+            raise HTTPException(status_code=400, detail="Usuario o contraseña incorrectos")
+
+        login_failures.pop(client_key, None)
+
+    return {"access_token": create_access_token(data={"sub": admin_user}), "token_type": "bearer"}
+
+
 @app.patch("/api/v1/data/content")
 async def update_content(req: ContentUpdateRequest, user: str = Depends(verify_token)):
     if not db: raise HTTPException(status_code=503, detail="BD no disponible.")
