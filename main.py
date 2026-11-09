@@ -59,7 +59,7 @@ except Exception as e:
     bucket = None
     print(f"ERROR CRÍTICO AL INICIALIZAR FIREBASE: {e}")
 
-JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'fallback_secret')
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
@@ -105,15 +105,21 @@ class ContentUpdateRequest(BaseModel):
     key: str; value: Any
 bearer_scheme = HTTPBearer()
 
+def require_jwt_secret() -> str:
+    if not JWT_SECRET_KEY or not JWT_SECRET_KEY.strip():
+        raise HTTPException(status_code=503, detail="El acceso de administración no está disponible.")
+    return JWT_SECRET_KEY
+
+
 def create_access_token(data: dict):
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode = data.copy()
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(to_encode, require_jwt_secret(), algorithm=ALGORITHM)
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(credentials.credentials, require_jwt_secret(), algorithms=[ALGORITHM])
         user_email: str = payload.get("sub")
         if user_email is None: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
         return user_email
