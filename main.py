@@ -309,7 +309,25 @@ MAX_PHOTO_SIZE_MB = 3
 MAX_SONG_SIZE_MB = 10
 
 # Función para subir un archivo y devolver su URL pública
-async def upload_file_to_storage(file: UploadFile, path: str) -> str:
+REGISTRATION_IMAGE_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+REGISTRATION_AUDIO_TYPES = {".mp3": "audio/mpeg"}
+
+
+def registration_upload_type(file: UploadFile, allowed_types: dict[str, str], field: str) -> str:
+    extension = os.path.splitext(file.filename or "")[1].lower()
+    content_type = allowed_types.get(extension)
+    if content_type is None:
+        formats = ", ".join(ext[1:].upper() for ext in allowed_types)
+        raise HTTPException(status_code=415, detail=f"{field}: formatos admitidos: {formats}.")
+    return content_type
+
+
+async def upload_file_to_storage(file: UploadFile, path: str, content_type: str) -> str:
     if not file or not file.filename:
         return ""
     try:
@@ -320,8 +338,7 @@ async def upload_file_to_storage(file: UploadFile, path: str) -> str:
         file_content = await file.read()
         await file.seek(0) # Rebobinamos el puntero del archivo por si se necesita leer de nuevo
         
-        content_type, _ = mimetypes.guess_type(file.filename)
-        blob.upload_from_string(file_content, content_type=content_type or 'application/octet-stream')
+        blob.upload_from_string(file_content, content_type=content_type)
         blob.make_public()
         return blob.public_url
     except Exception as e:
@@ -345,6 +362,11 @@ async def submit_band(
         raise HTTPException(status_code=503, detail="Servicios de base de datos o almacenamiento no disponibles.")
     if website_url:
         raise HTTPException(status_code=400, detail="Spam detectado")
+
+    # Valida los tres formatos antes de leer o publicar cualquiera de los archivos.
+    logo_type = registration_upload_type(logo_file, REGISTRATION_IMAGE_TYPES, "Logo")
+    photo_type = registration_upload_type(photo_file, REGISTRATION_IMAGE_TYPES, "Foto")
+    song_type = registration_upload_type(song_file, REGISTRATION_AUDIO_TYPES, "Canción")
 
     # --- VALIDACIÓN DE TAMAÑO EN EL BACKEND ---
     # Convertimos MB a Bytes para la comparación
@@ -377,9 +399,9 @@ async def submit_band(
             bands = [] # Si el documento no existe, empezamos con una lista vacía
 
         # 2. Subir los archivos a Firebase Storage
-        logo_url = await upload_file_to_storage(logo_file, "logos")
-        photo_url = await upload_file_to_storage(photo_file, "photos")
-        song_url = await upload_file_to_storage(song_file, "songs")
+        logo_url = await upload_file_to_storage(logo_file, "logos", logo_type)
+        photo_url = await upload_file_to_storage(photo_file, "photos", photo_type)
+        song_url = await upload_file_to_storage(song_file, "songs", song_type)
 
         # 3. Preparar los datos de la nueva banda
         new_band_id = max([b['id'] for b in bands] + [0]) + 1
